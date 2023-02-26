@@ -1,5 +1,5 @@
 [workspace]
-members = ["echo", "common", "unique-ids"]
+members = ["echo", "common", "unique-ids", "broadcast"]
 
 [workspace.dependencies]
 serde = { version = "1.0.152", features = ["derive"] }
