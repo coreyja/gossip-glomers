@@ -60,6 +60,7 @@ pub trait Handler: NodeIdable + Sized {
 
         let output = serde_json::to_string(&resp)?;
 
+        eprintln!("Sending: {output}");
         println!("{output}");
 
         Ok(())

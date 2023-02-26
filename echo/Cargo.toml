@@ -8,6 +8,6 @@ edition = "2021"
 [dependencies]
 common = { path = "../common" }
 
-color-eyre = "0.6.2"
+color-eyre = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
