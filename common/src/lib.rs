@@ -62,9 +62,7 @@ pub trait Handler: NodeIdable + Sized {
             return Ok(());
         };
 
-        let resp = self.response_from(&m, body);
-
-        self.send_message(resp)
+        self.send_body(body, &m.src)
     }
 
     fn send_message<Body: Serialize>(&mut self, m: Message<Body>) -> Result<()> {
@@ -84,18 +82,6 @@ pub trait Handler: NodeIdable + Sized {
         };
 
         self.send_message(m)
-    }
-
-    fn response_from(
-        &mut self,
-        request: &Message<Self::RequestBody>,
-        body: Self::ResponseBody,
-    ) -> Message<Self::ResponseBody> {
-        Message {
-            body,
-            dest: request.src.clone(),
-            src: self.node_id().to_owned(),
-        }
     }
 
     fn handle_request(&mut self, m: &Self::RequestBody) -> Option<Self::ResponseBody>;
