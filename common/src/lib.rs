@@ -55,10 +55,20 @@ pub trait Handler: NodeIdable + Sized {
     type RequestBody: for<'a> Deserialize<'a>;
     type ResponseBody: Serialize;
 
-    fn handle_message(&mut self, m: Message<Self::RequestBody>) -> Result<()> {
-        let resp = self.create_response(m);
+    fn respond_to(&mut self, m: Message<Self::RequestBody>) -> Result<()> {
+        let body = self.handle_request(&m.body);
 
-        let output = serde_json::to_string(&resp)?;
+        let Some(body) = body else {
+            return Ok(());
+        };
+
+        let resp = self.response_from(&m, body);
+
+        self.send_message(resp)
+    }
+
+    fn send_message<Body: Serialize>(&mut self, m: Message<Body>) -> Result<()> {
+        let output = serde_json::to_string(&m)?;
 
         eprintln!("Sending: {output}");
         println!("{output}");
@@ -66,17 +76,29 @@ pub trait Handler: NodeIdable + Sized {
         Ok(())
     }
 
-    fn create_response(&mut self, m: Message<Self::RequestBody>) -> Message<Self::ResponseBody> {
-        let body = self.create_response_body(&m.body);
+    fn send_body<Body: Serialize>(&mut self, body: Body, dest: &str) -> Result<()> {
+        let m = Message {
+            body,
+            dest: dest.to_owned(),
+            src: self.node_id().to_owned(),
+        };
 
+        self.send_message(m)
+    }
+
+    fn response_from(
+        &mut self,
+        request: &Message<Self::RequestBody>,
+        body: Self::ResponseBody,
+    ) -> Message<Self::ResponseBody> {
         Message {
             body,
-            dest: m.src.clone(),
+            dest: request.src.clone(),
             src: self.node_id().to_owned(),
         }
     }
 
-    fn create_response_body(&mut self, m: &Self::RequestBody) -> Self::ResponseBody;
+    fn handle_request(&mut self, m: &Self::RequestBody) -> Option<Self::ResponseBody>;
 
     fn run(mut self) -> Result<()> {
         let stdin = std::io::stdin();
@@ -90,7 +112,7 @@ pub trait Handler: NodeIdable + Sized {
 
                 let m = serde_json::from_str::<Message<Self::RequestBody>>(&buffer)?;
 
-                self.handle_message(m)?;
+                self.respond_to(m)?;
             }
         }
     }
@@ -161,7 +183,7 @@ impl MakeNewNode for Node {
             next_msg_id: 0,
         };
 
-        node.handle_message(m)?;
+        node.respond_to(m)?;
 
         Ok(node)
     }
@@ -172,11 +194,11 @@ impl Handler for Node {
 
     type ResponseBody = InitBodyResponse;
 
-    fn create_response_body(&mut self, m: &Self::RequestBody) -> Self::ResponseBody {
+    fn handle_request(&mut self, m: &Self::RequestBody) -> Option<Self::ResponseBody> {
         match m {
-            InitBody::Init(init) => {
-                InitBodyResponse::InitResp(init.response(self.generate_msg_id()))
-            }
+            InitBody::Init(init) => Some(InitBodyResponse::InitResp(
+                init.response(self.generate_msg_id()),
+            )),
         }
     }
 }

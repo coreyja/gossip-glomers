@@ -18,6 +18,8 @@ enum RequestBody {
     Read { msg_id: MsgId },
     #[serde(rename = "topology")]
     Topology { msg_id: MsgId, topology: Value },
+    #[serde(rename = "broadcast_ok")]
+    BroadcastOk { msg_id: MsgId, in_reply_to: MsgId },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -45,25 +47,49 @@ impl Handler for BroadcastNode {
     type RequestBody = RequestBody;
     type ResponseBody = ResponseBody;
 
-    fn create_response_body(&mut self, body: &RequestBody) -> ResponseBody {
+    fn handle_request(&mut self, body: &RequestBody) -> Option<ResponseBody> {
         match body {
             RequestBody::Broadcast { msg_id, message } => {
-                self.recieved_values.push(*message);
+                if self.recieved_values.contains(message) {
+                    return Some(ResponseBody::Broadcast {
+                        msg_id: self.inner_node.generate_msg_id(),
+                        in_reply_to: *msg_id,
+                    });
+                }
 
-                ResponseBody::Broadcast {
+                self.recieved_values.push(*message);
+                let peers = self.inner_node.peers.clone();
+                let me_id = self.node_id().to_owned();
+
+                for node in peers.iter().filter(|node| node != &&me_id) {
+                    let msg_id = self.inner_node.generate_msg_id();
+                    self.send_body(
+                        RequestBody::Broadcast {
+                            msg_id,
+                            message: *message,
+                        },
+                        node,
+                    )
+                    .unwrap();
+                }
+
+                Some(ResponseBody::Broadcast {
                     msg_id: self.inner_node.generate_msg_id(),
                     in_reply_to: *msg_id,
-                }
+                })
             }
-            RequestBody::Read { msg_id } => ResponseBody::Read {
+            RequestBody::Read { msg_id } => Some(ResponseBody::Read {
                 msg_id: self.inner_node.generate_msg_id(),
                 in_reply_to: *msg_id,
                 messages: self.recieved_values.clone(),
-            },
-            RequestBody::Topology { msg_id, .. } => ResponseBody::Topology {
+            }),
+            RequestBody::Topology { msg_id, .. } => Some(ResponseBody::Topology {
                 msg_id: self.inner_node.generate_msg_id(),
                 in_reply_to: *msg_id,
-            },
+            }),
+            // We will get BroadcastOK message from the peers we gossip to. Since we aren't
+            // fault tolerant yet, we don't need to take any action on this message.
+            RequestBody::BroadcastOk { .. } => None,
         }
     }
 }

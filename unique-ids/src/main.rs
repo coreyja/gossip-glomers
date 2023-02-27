@@ -37,7 +37,7 @@ impl Handler for UniqueIdNode {
     type RequestBody = RequestBody;
     type ResponseBody = ResponseBody;
 
-    fn create_response_body(&mut self, body: &RequestBody) -> ResponseBody {
+    fn handle_request(&mut self, body: &RequestBody) -> Option<ResponseBody> {
         let next = self.next_id;
         self.next_id += 1;
 
@@ -48,13 +48,13 @@ impl Handler for UniqueIdNode {
 
         eprintln!("Node {} generated id {:?}", self.inner_node.id, &id_vec);
 
-        match body {
+        Some(match body {
             RequestBody::Generate { msg_id } => ResponseBody::Generate {
                 id: id_vec.into(),
                 msg_id: self.inner_node.generate_msg_id(),
                 in_reply_to: *msg_id,
             },
-        }
+        })
     }
 }
 

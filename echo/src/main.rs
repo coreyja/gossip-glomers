@@ -42,15 +42,15 @@ impl Handler for EchoNode {
     type RequestBody = RequestBody;
     type ResponseBody = ResponseBody;
 
-    fn create_response_body(&mut self, body: &RequestBody) -> ResponseBody {
+    fn handle_request(&mut self, body: &RequestBody) -> Option<ResponseBody> {
         let new_msg_id = self.0.generate_msg_id();
 
         match body {
-            RequestBody::Echo(e) => ResponseBody::EchoResponse(EchoResponse {
+            RequestBody::Echo(e) => Some(ResponseBody::EchoResponse(EchoResponse {
                 msg_id: new_msg_id,
                 echo: e.echo.clone(),
                 in_reply_to: e.msg_id,
-            }),
+            })),
         }
     }
 }
