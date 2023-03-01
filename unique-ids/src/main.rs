@@ -9,14 +9,14 @@ struct UniqueIdNode {
     next_id: u64,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 enum RequestBody {
     #[serde(rename = "generate")]
     Generate { msg_id: MsgId },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 enum ResponseBody {
     #[serde(rename = "generate_ok")]

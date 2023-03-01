@@ -5,27 +5,27 @@ use serde::{Deserialize, Serialize};
 
 struct EchoNode(Node);
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 enum RequestBody {
     #[serde(rename = "echo")]
     Echo(Echo),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 enum ResponseBody {
     #[serde(rename = "echo_ok")]
     EchoResponse(EchoResponse),
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 struct Echo {
     msg_id: MsgId,
     echo: String,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 struct EchoResponse {
     msg_id: MsgId,
     echo: String,

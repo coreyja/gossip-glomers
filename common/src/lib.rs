@@ -21,8 +21,8 @@ impl Node {
 
 pub type MsgId = u64;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct Message<Body> {
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct Message<Body: Clone> {
     pub body: Body,
     pub dest: String,
     pub src: String,
@@ -52,8 +52,8 @@ impl MsgIdAble for Node {
 }
 
 pub trait Handler: NodeIdable + Sized {
-    type RequestBody: for<'a> Deserialize<'a>;
-    type ResponseBody: Serialize;
+    type RequestBody: Clone + for<'a> Deserialize<'a>;
+    type ResponseBody: Serialize + Clone;
 
     fn respond_to(&mut self, m: Message<Self::RequestBody>) -> Result<()> {
         let body = self.handle_request(&m.body);
@@ -65,7 +65,7 @@ pub trait Handler: NodeIdable + Sized {
         self.send_body(body, &m.src)
     }
 
-    fn send_message<Body: Serialize>(&mut self, m: Message<Body>) -> Result<()> {
+    fn send_message<Body: Serialize + Clone>(&mut self, m: Message<Body>) -> Result<()> {
         let output = serde_json::to_string(&m)?;
 
         eprintln!("Sending: {output}");
@@ -74,7 +74,7 @@ pub trait Handler: NodeIdable + Sized {
         Ok(())
     }
 
-    fn send_body<Body: Serialize>(&mut self, body: Body, dest: &str) -> Result<()> {
+    fn send_body<Body: Serialize + Clone>(&mut self, body: Body, dest: &str) -> Result<()> {
         let m = Message {
             body,
             dest: dest.to_owned(),
@@ -111,14 +111,14 @@ pub struct ErrorMsg {
     pub text: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Init {
     pub msg_id: MsgId,
     pub node_id: String,
     pub node_ids: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct InitResponse {
     pub msg_id: MsgId,
     pub in_reply_to: MsgId,
@@ -137,14 +137,14 @@ pub trait MakeNewNode: Sized {
     fn init(init_msg: String) -> Result<Self>;
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum InitBody {
     #[serde(rename = "init")]
     Init(Init),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum InitBodyResponse {
     #[serde(rename = "init_ok")]

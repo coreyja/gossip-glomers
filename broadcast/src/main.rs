@@ -7,13 +7,22 @@ use serde_json::Value;
 struct BroadcastNode {
     inner_node: Node,
     recieved_values: Vec<u64>,
+    gossip_queue: Vec<Broadcast>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+impl BroadcastNode {
+    fn gossip(&mut self, b: Broadcast, dest: &str) -> Result<()> {
+        self.gossip_queue.push(b.clone());
+
+        self.send_body(RequestBody::Broadcast(b), dest)
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 enum RequestBody {
     #[serde(rename = "broadcast")]
-    Broadcast { msg_id: MsgId, message: u64 },
+    Broadcast(Broadcast),
     #[serde(rename = "read")]
     Read { msg_id: MsgId },
     #[serde(rename = "topology")]
@@ -22,7 +31,13 @@ enum RequestBody {
     BroadcastOk { msg_id: MsgId, in_reply_to: MsgId },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct Broadcast {
+    msg_id: MsgId,
+    message: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 enum ResponseBody {
     #[serde(rename = "broadcast_ok")]
@@ -49,7 +64,7 @@ impl Handler for BroadcastNode {
 
     fn handle_request(&mut self, body: &RequestBody) -> Option<ResponseBody> {
         match body {
-            RequestBody::Broadcast { msg_id, message } => {
+            RequestBody::Broadcast(Broadcast { msg_id, message }) => {
                 if self.recieved_values.contains(message) {
                     return Some(ResponseBody::Broadcast {
                         msg_id: self.inner_node.generate_msg_id(),
@@ -63,8 +78,8 @@ impl Handler for BroadcastNode {
 
                 for node in peers.iter().filter(|node| node != &&me_id) {
                     let msg_id = self.inner_node.generate_msg_id();
-                    self.send_body(
-                        RequestBody::Broadcast {
+                    self.gossip(
+                        Broadcast {
                             msg_id,
                             message: *message,
                         },
@@ -89,7 +104,20 @@ impl Handler for BroadcastNode {
             }),
             // We will get BroadcastOK message from the peers we gossip to. Since we aren't
             // fault tolerant yet, we don't need to take any action on this message.
-            RequestBody::BroadcastOk { .. } => None,
+            RequestBody::BroadcastOk { in_reply_to, .. } => {
+                let mut new_gossip_queue = vec![];
+                let old_queue = self.gossip_queue.clone();
+
+                for m in old_queue.into_iter() {
+                    if m.msg_id != *in_reply_to {
+                        new_gossip_queue.push(m);
+                    }
+                }
+
+                self.gossip_queue = new_gossip_queue;
+
+                None
+            }
         }
     }
 }
@@ -105,6 +133,7 @@ fn main() -> Result<()> {
     let node: BroadcastNode = BroadcastNode {
         inner_node: node,
         recieved_values: vec![],
+        gossip_queue: vec![],
     };
 
     node.run()
