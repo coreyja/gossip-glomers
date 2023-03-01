@@ -102,19 +102,9 @@ impl Handler for BroadcastNode {
                 msg_id: self.inner_node.generate_msg_id(),
                 in_reply_to: *msg_id,
             }),
-            // We will get BroadcastOK message from the peers we gossip to. Since we aren't
-            // fault tolerant yet, we don't need to take any action on this message.
+            // We will get BroadcastOK message from the peers we gossip to
             RequestBody::BroadcastOk { in_reply_to, .. } => {
-                let mut new_gossip_queue = vec![];
-                let old_queue = self.gossip_queue.clone();
-
-                for m in old_queue.into_iter() {
-                    if m.msg_id != *in_reply_to {
-                        new_gossip_queue.push(m);
-                    }
-                }
-
-                self.gossip_queue = new_gossip_queue;
+                self.gossip_queue.retain(|m| m.msg_id != *in_reply_to);
 
                 None
             }
