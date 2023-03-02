@@ -14,7 +14,7 @@ struct RequestHandler {
 
 struct GossipManager {
     reciever: Receiver<GossipMsg>,
-    gossip_queue: Vec<Broadcast>,
+    gossip_queue: Vec<(Broadcast, String)>,
     stdout_sender: Sender<String>,
     node_id: String,
 }
@@ -26,25 +26,34 @@ impl GossipManager {
 
             match msg {
                 Ok(GossipMsg::Gossip(b, dest)) => {
-                    self.gossip_queue.push(b.clone());
+                    self.gossip_queue.push((b.clone(), dest.clone()));
 
-                    let m = Message {
-                        body: RequestBody::Broadcast(b),
-                        dest: dest.to_owned(),
-                        src: self.node_id.to_owned(),
-                    };
-                    let output = serde_json::to_string(&m).unwrap();
-                    self.stdout_sender.send(output).unwrap();
+                    self.send_gossip(b, dest);
                 }
-                Ok(GossipMsg::GotResponse(in_response_to)) => {
-                    self.gossip_queue.retain(|b| b.msg_id != in_response_to)
-                }
+                Ok(GossipMsg::GotResponse(in_response_to)) => self
+                    .gossip_queue
+                    .retain(|(b, _)| b.msg_id != in_response_to),
                 Err(TryRecvError::Disconnected) => break,
-                Err(TryRecvError::Empty) => continue,
+                Err(TryRecvError::Empty) => {
+                    for (b, dest) in self.gossip_queue.iter() {
+                        self.send_gossip(b.clone(), dest.clone());
+                    }
+                }
             };
         }
 
         Ok(())
+    }
+
+    fn send_gossip(&self, b: Broadcast, dest: String) {
+        let m = Message {
+            body: RequestBody::Broadcast(b),
+            dest,
+            src: self.node_id.to_owned(),
+        };
+        let output = serde_json::to_string(&m).unwrap();
+
+        self.stdout_sender.send(output).unwrap();
     }
 }
 
