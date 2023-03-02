@@ -1,3 +1,5 @@
+use std::sync::{atomic::AtomicU64, Arc};
+
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 
@@ -6,16 +8,24 @@ pub struct Node {
     pub id: String,
     pub peers: Vec<String>,
 
-    next_msg_id: MsgId,
+    pub ids: Arc<IdGenerator>,
+}
+
+#[derive(Debug)]
+pub struct IdGenerator {
+    next_id: AtomicU64,
+}
+
+impl MsgIdAble for IdGenerator {
+    fn generate_msg_id(&self) -> MsgId {
+        self.next_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 impl Node {
-    pub fn new(id: String, peers: Vec<String>) -> Self {
-        Self {
-            id,
-            peers,
-            next_msg_id: 0,
-        }
+    pub fn new(id: String, peers: Vec<String>, ids: Arc<IdGenerator>) -> Self {
+        Self { id, peers, ids }
     }
 }
 
@@ -39,15 +49,12 @@ impl NodeIdable for Node {
 }
 
 pub trait MsgIdAble {
-    fn generate_msg_id(&mut self) -> MsgId;
+    fn generate_msg_id(&self) -> MsgId;
 }
 
 impl MsgIdAble for Node {
-    fn generate_msg_id(&mut self) -> MsgId {
-        let next = self.next_msg_id;
-        self.next_msg_id += 1;
-
-        next
+    fn generate_msg_id(&self) -> MsgId {
+        self.ids.generate_msg_id()
     }
 }
 
@@ -162,11 +169,15 @@ impl MakeNewNode for Node {
             ..
         } = &m;
 
+        let ids = IdGenerator {
+            next_id: AtomicU64::new(0),
+        };
+        let ids = Arc::new(ids);
+
         let mut node = Node {
             id: node_id.clone(),
             peers: node_ids.clone(),
-
-            next_msg_id: 0,
+            ids,
         };
 
         node.respond_to(m)?;

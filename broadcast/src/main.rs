@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use common::*;
 
 use color_eyre::eyre::Result;
@@ -17,26 +19,43 @@ struct GossipManager {
     gossip_queue: Vec<(Broadcast, String)>,
     stdout_sender: Sender<String>,
     node_id: String,
+
+    /// Nearest Peers
+    topology: Vec<String>,
+
+    ids: Arc<IdGenerator>,
 }
 
 impl GossipManager {
     fn handle_gossip(mut self) -> Result<()> {
+        let mut last_gossip = std::time::Instant::now();
         loop {
             let msg = self.reciever.try_recv();
 
             match msg {
-                Ok(GossipMsg::Gossip(b, dest)) => {
-                    self.gossip_queue.push((b.clone(), dest.clone()));
+                Ok(GossipMsg::Gossip(msg)) => {
+                    for dest in self.topology.iter().filter(|d| d != &&self.node_id) {
+                        let broadcast = Broadcast {
+                            msg_id: self.ids.generate_msg_id(),
+                            message: msg,
+                        };
+                        self.gossip_queue.push((broadcast.clone(), dest.clone()));
 
-                    self.send_gossip(b, dest);
+                        self.send_gossip(broadcast, dest.clone());
+                    }
                 }
                 Ok(GossipMsg::GotResponse(in_response_to)) => self
                     .gossip_queue
                     .retain(|(b, _)| b.msg_id != in_response_to),
                 Err(TryRecvError::Disconnected) => break,
                 Err(TryRecvError::Empty) => {
-                    for (b, dest) in self.gossip_queue.iter() {
-                        self.send_gossip(b.clone(), dest.clone());
+                    let now = std::time::Instant::now();
+
+                    if now.duration_since(last_gossip).as_secs() > 4 {
+                        last_gossip = now;
+                        for (b, dest) in self.gossip_queue.iter() {
+                            self.send_gossip(b.clone(), dest.clone());
+                        }
                     }
                 }
             };
@@ -58,14 +77,13 @@ impl GossipManager {
 }
 
 enum GossipMsg {
-    Gossip(Broadcast, String),
+    Gossip(u64),
     GotResponse(MsgId),
 }
 
 impl RequestHandler {
-    fn gossip(&mut self, b: Broadcast, dest: &str) -> Result<()> {
-        self.gossip_handler
-            .send(GossipMsg::Gossip(b, dest.to_owned()))?;
+    fn gossip(&mut self, b: u64) -> Result<()> {
+        self.gossip_handler.send(GossipMsg::Gossip(b))?;
 
         Ok(())
     }
@@ -134,20 +152,8 @@ impl Handler for RequestHandler {
                 }
 
                 self.recieved_values.push(*message);
-                let peers = self.inner_node.peers.clone();
-                let me_id = self.node_id().to_owned();
 
-                for node in peers.iter().filter(|node| node != &&me_id) {
-                    let msg_id = self.inner_node.generate_msg_id();
-                    self.gossip(
-                        Broadcast {
-                            msg_id,
-                            message: *message,
-                        },
-                        node,
-                    )
-                    .unwrap();
-                }
+                self.gossip(*message).unwrap();
 
                 Some(ResponseBody::Broadcast {
                     msg_id: self.inner_node.generate_msg_id(),
@@ -192,6 +198,8 @@ fn main() -> Result<()> {
         gossip_queue: vec![],
         stdout_sender: stdout_sender.clone(),
         node_id: node.node_id().to_owned(),
+        topology: node.peers.clone(),
+        ids: Arc::clone(&node.ids),
     };
 
     let request_handler = RequestHandler {
