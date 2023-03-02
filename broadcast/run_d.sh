@@ -2,10 +2,10 @@
 
 set -e
 
-cargo build
+cargo build --release
 java -jar ~/maelstrom/lib/maelstrom.jar test \
   -w broadcast \
-  --bin ~/Projects/gossip-glomers/target/debug/broadcast \
+  --bin ~/Projects/gossip-glomers/target/release/broadcast \
   --node-count 25 \
   --time-limit 20 \
   --rate 100 \
