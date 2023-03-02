@@ -1,7 +1,7 @@
 use common::*;
 
 use color_eyre::eyre::Result;
-use crossbeam::channel::{unbounded, Receiver, Sender};
+use crossbeam::channel::{unbounded, Receiver, Sender, TryRecvError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -16,11 +16,35 @@ struct GossipManager {
     reciever: Receiver<GossipMsg>,
     gossip_queue: Vec<Broadcast>,
     stdout_sender: Sender<String>,
+    node_id: String,
 }
 
 impl GossipManager {
-    fn handle_gossip(&self) -> Result<()> {
-        loop {}
+    fn handle_gossip(mut self) -> Result<()> {
+        loop {
+            let msg = self.reciever.try_recv();
+
+            match msg {
+                Ok(GossipMsg::Gossip(b, dest)) => {
+                    self.gossip_queue.push(b.clone());
+
+                    let m = Message {
+                        body: RequestBody::Broadcast(b),
+                        dest: dest.to_owned(),
+                        src: self.node_id.to_owned(),
+                    };
+                    let output = serde_json::to_string(&m).unwrap();
+                    self.stdout_sender.send(output).unwrap();
+                }
+                Ok(GossipMsg::GotResponse(in_response_to)) => {
+                    self.gossip_queue.retain(|b| b.msg_id != in_response_to)
+                }
+                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) => continue,
+            };
+        }
+
+        Ok(())
     }
 }
 
@@ -31,9 +55,10 @@ enum GossipMsg {
 
 impl RequestHandler {
     fn gossip(&mut self, b: Broadcast, dest: &str) -> Result<()> {
-        // self.gossip_queue.push(b.clone());
+        self.gossip_handler
+            .send(GossipMsg::Gossip(b, dest.to_owned()))?;
 
-        self.send_body(RequestBody::Broadcast(b), dest)
+        Ok(())
     }
 }
 
@@ -131,7 +156,9 @@ impl Handler for RequestHandler {
             }),
             // We will get BroadcastOK message from the peers we gossip to
             RequestBody::BroadcastOk { in_reply_to, .. } => {
-                // self.gossip_queue.retain(|m| m.msg_id != *in_reply_to);
+                self.gossip_handler
+                    .send(GossipMsg::GotResponse(*in_reply_to))
+                    .unwrap();
 
                 None
             }
@@ -145,6 +172,7 @@ fn main() -> Result<()> {
     // Init the node BEFORE we start the loop. We know the first message MUST be an init message
     let mut buffer = String::new();
     stdin.read_line(&mut buffer)?;
+    let node = Node::init(buffer)?;
 
     let (stdout_sender, stdout_receiver) = unbounded();
 
@@ -154,9 +182,9 @@ fn main() -> Result<()> {
         reciever: gossip_receiver,
         gossip_queue: vec![],
         stdout_sender: stdout_sender.clone(),
+        node_id: node.node_id().to_owned(),
     };
 
-    let node = Node::init(buffer)?;
     let request_handler = RequestHandler {
         inner_node: node,
         recieved_values: vec![],
