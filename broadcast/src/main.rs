@@ -1,11 +1,10 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use common::*;
 
 use color_eyre::eyre::Result;
 use crossbeam::channel::{unbounded, Receiver, Sender, TryRecvError};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 struct RequestHandler {
     inner_node: Node,
@@ -14,9 +13,45 @@ struct RequestHandler {
     stdout_sender: Sender<String>,
 }
 
+#[derive(Debug, Clone)]
+struct Job {
+    broadcast: Broadcast,
+    dest: String,
+    run_at: Instant,
+    attempts: u64,
+}
+
+impl Job {
+    fn send(&mut self, stdout_sender: &Sender<String>, node_id: String) {
+        let m = Message {
+            body: RequestBody::Broadcast(self.broadcast.clone()),
+            dest: self.dest.clone(),
+            src: node_id,
+        };
+        let output = serde_json::to_string(&m).unwrap();
+
+        stdout_sender.send(output).unwrap();
+
+        self.attempts += 1;
+
+        // // attempts=1 -> 10ms
+        // // attempts=2 -> 160ms
+        // // attempts=3 -> 810ms
+        // let backoff_delay = self.attempts.pow(4) * 10;
+
+        // const CONSTANT_DELAY_MS: u64 = 300;
+        // eprintln!("(attempt {}", self.attempts);
+
+        // let delay = std::time::Duration::from_millis(CONSTANT_DELAY_MS + backoff_delay);
+
+        let delay = std::time::Duration::from_millis(self.attempts * 200);
+        self.run_at = std::time::Instant::now() + delay;
+    }
+}
+
 struct GossipManager {
     reciever: Receiver<GossipMsg>,
-    gossip_queue: Vec<(Broadcast, String)>,
+    gossip_queue: Vec<Job>,
     stdout_sender: Sender<String>,
     node_id: String,
 
@@ -28,33 +63,41 @@ struct GossipManager {
 
 impl GossipManager {
     fn handle_gossip(mut self) -> Result<()> {
-        let mut last_gossip = std::time::Instant::now();
         loop {
             let msg = self.reciever.try_recv();
 
             match msg {
+                Ok(GossipMsg::Topology(topology)) => {
+                    self.topology = topology;
+                }
                 Ok(GossipMsg::Gossip(msg)) => {
+                    let now = std::time::Instant::now();
+
                     for dest in self.topology.iter().filter(|d| d != &&self.node_id) {
                         let broadcast = Broadcast {
                             msg_id: self.ids.generate_msg_id(),
                             message: msg,
                         };
-                        self.gossip_queue.push((broadcast.clone(), dest.clone()));
-
-                        self.send_gossip(broadcast, dest.clone());
+                        let job = Job {
+                            broadcast: broadcast.clone(),
+                            dest: dest.clone(),
+                            run_at: now,
+                            attempts: 0,
+                        };
+                        self.gossip_queue.push(job);
                     }
                 }
                 Ok(GossipMsg::GotResponse(in_response_to)) => self
                     .gossip_queue
-                    .retain(|(b, _)| b.msg_id != in_response_to),
+                    .retain(|job| job.broadcast.msg_id != in_response_to),
                 Err(TryRecvError::Disconnected) => break,
                 Err(TryRecvError::Empty) => {
                     let now = std::time::Instant::now();
+                    let stdout_sender = &self.stdout_sender;
 
-                    if now.duration_since(last_gossip).as_secs() > 4 {
-                        last_gossip = now;
-                        for (b, dest) in self.gossip_queue.iter() {
-                            self.send_gossip(b.clone(), dest.clone());
+                    for job in self.gossip_queue.iter_mut() {
+                        if job.run_at <= now {
+                            job.send(stdout_sender, self.node_id.clone());
                         }
                     }
                 }
@@ -63,21 +106,11 @@ impl GossipManager {
 
         Ok(())
     }
-
-    fn send_gossip(&self, b: Broadcast, dest: String) {
-        let m = Message {
-            body: RequestBody::Broadcast(b),
-            dest,
-            src: self.node_id.to_owned(),
-        };
-        let output = serde_json::to_string(&m).unwrap();
-
-        self.stdout_sender.send(output).unwrap();
-    }
 }
 
 enum GossipMsg {
     Gossip(u64),
+    Topology(Vec<String>),
     GotResponse(MsgId),
 }
 
@@ -97,7 +130,10 @@ enum RequestBody {
     #[serde(rename = "read")]
     Read { msg_id: MsgId },
     #[serde(rename = "topology")]
-    Topology { msg_id: MsgId, topology: Value },
+    Topology {
+        msg_id: MsgId,
+        topology: HashMap<String, Vec<String>>,
+    },
     #[serde(rename = "broadcast_ok")]
     BroadcastOk { msg_id: MsgId, in_reply_to: MsgId },
 }
@@ -165,10 +201,17 @@ impl Handler for RequestHandler {
                 in_reply_to: *msg_id,
                 messages: self.recieved_values.clone(),
             }),
-            RequestBody::Topology { msg_id, .. } => Some(ResponseBody::Topology {
-                msg_id: self.inner_node.generate_msg_id(),
-                in_reply_to: *msg_id,
-            }),
+            RequestBody::Topology { msg_id, topology } => {
+                let this_node_topology = topology.get(self.node_id()).unwrap().clone();
+                self.gossip_handler
+                    .send(GossipMsg::Topology(this_node_topology))
+                    .unwrap();
+
+                Some(ResponseBody::Topology {
+                    msg_id: self.inner_node.generate_msg_id(),
+                    in_reply_to: *msg_id,
+                })
+            }
             // We will get BroadcastOK message from the peers we gossip to
             RequestBody::BroadcastOk { in_reply_to, .. } => {
                 self.gossip_handler
