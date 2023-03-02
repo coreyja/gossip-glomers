@@ -11,3 +11,4 @@ common = { path = "../common" }
 color-eyre = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+crossbeam = "0.8.2"

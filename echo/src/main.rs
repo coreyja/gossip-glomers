@@ -65,5 +65,5 @@ fn main() -> Result<()> {
     let node = Node::init(buffer)?;
     let node: EchoNode = EchoNode(node);
 
-    node.run()
+    node.handle_requests()
 }

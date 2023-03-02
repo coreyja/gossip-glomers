@@ -1,18 +1,37 @@
 use common::*;
 
 use color_eyre::eyre::Result;
+use crossbeam::channel::{unbounded, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-struct BroadcastNode {
+struct RequestHandler {
     inner_node: Node,
     recieved_values: Vec<u64>,
-    gossip_queue: Vec<Broadcast>,
+    gossip_handler: Sender<GossipMsg>,
+    stdout_sender: Sender<String>,
 }
 
-impl BroadcastNode {
+struct GossipManager {
+    reciever: Receiver<GossipMsg>,
+    gossip_queue: Vec<Broadcast>,
+    stdout_sender: Sender<String>,
+}
+
+impl GossipManager {
+    fn handle_gossip(&self) -> Result<()> {
+        loop {}
+    }
+}
+
+enum GossipMsg {
+    Gossip(Broadcast, String),
+    GotResponse(MsgId),
+}
+
+impl RequestHandler {
     fn gossip(&mut self, b: Broadcast, dest: &str) -> Result<()> {
-        self.gossip_queue.push(b.clone());
+        // self.gossip_queue.push(b.clone());
 
         self.send_body(RequestBody::Broadcast(b), dest)
     }
@@ -52,15 +71,23 @@ enum ResponseBody {
     Topology { msg_id: MsgId, in_reply_to: MsgId },
 }
 
-impl NodeIdable for BroadcastNode {
+impl NodeIdable for RequestHandler {
     fn node_id(&self) -> &str {
         self.inner_node.node_id()
     }
 }
 
-impl Handler for BroadcastNode {
+impl Handler for RequestHandler {
     type RequestBody = RequestBody;
     type ResponseBody = ResponseBody;
+
+    fn send_message<Body: Serialize + Clone>(&mut self, m: Message<Body>) -> Result<()> {
+        let output = serde_json::to_string(&m)?;
+
+        self.stdout_sender.send(output)?;
+
+        Ok(())
+    }
 
     fn handle_request(&mut self, body: &RequestBody) -> Option<ResponseBody> {
         match body {
@@ -104,7 +131,7 @@ impl Handler for BroadcastNode {
             }),
             // We will get BroadcastOK message from the peers we gossip to
             RequestBody::BroadcastOk { in_reply_to, .. } => {
-                self.gossip_queue.retain(|m| m.msg_id != *in_reply_to);
+                // self.gossip_queue.retain(|m| m.msg_id != *in_reply_to);
 
                 None
             }
@@ -119,12 +146,36 @@ fn main() -> Result<()> {
     let mut buffer = String::new();
     stdin.read_line(&mut buffer)?;
 
-    let node = Node::init(buffer)?;
-    let node: BroadcastNode = BroadcastNode {
-        inner_node: node,
-        recieved_values: vec![],
+    let (stdout_sender, stdout_receiver) = unbounded();
+
+    let (gossip_sender, gossip_receiver) = unbounded();
+
+    let gossip_manager = GossipManager {
+        reciever: gossip_receiver,
         gossip_queue: vec![],
+        stdout_sender: stdout_sender.clone(),
     };
 
-    node.run()
+    let node = Node::init(buffer)?;
+    let request_handler = RequestHandler {
+        inner_node: node,
+        recieved_values: vec![],
+        gossip_handler: gossip_sender,
+        stdout_sender,
+    };
+
+    let request_thread_handle = std::thread::spawn(|| request_handler.handle_requests());
+    let gossip_join_handle = std::thread::spawn(move || gossip_manager.handle_gossip());
+    let stdout_join_handle = std::thread::spawn(move || {
+        stdout_receiver.iter().for_each(|output| {
+            eprintln!("Sending: {output}");
+            println!("{output}");
+        });
+    });
+
+    request_thread_handle.join().unwrap()?;
+    gossip_join_handle.join().unwrap()?;
+    stdout_join_handle.join().unwrap();
+
+    Ok(())
 }

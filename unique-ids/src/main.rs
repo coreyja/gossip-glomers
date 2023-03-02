@@ -71,5 +71,5 @@ fn main() -> Result<()> {
         next_id: 0,
     };
 
-    node.run()
+    node.handle_requests()
 }

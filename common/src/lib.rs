@@ -86,7 +86,7 @@ pub trait Handler: NodeIdable + Sized {
 
     fn handle_request(&mut self, m: &Self::RequestBody) -> Option<Self::ResponseBody>;
 
-    fn run(mut self) -> Result<()> {
+    fn handle_requests(mut self) -> Result<()> {
         let stdin = std::io::stdin();
 
         loop {
