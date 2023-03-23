@@ -2,9 +2,9 @@
 
 set -e
 
-# Messages-per-operation is below 30
-# Median latency is below 400ms
-# Maximum latency is below 600ms
+# Messages-per-operation is below 20
+# Median latency is below 1 second
+# Maximum latency is below 2 seconds
 
 cargo build --release
 java -jar ~/maelstrom/lib/maelstrom.jar test \
