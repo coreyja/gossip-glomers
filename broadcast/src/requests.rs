@@ -88,6 +88,25 @@ impl Handler for RequestHandler {
 
                 None
             }
+            // We will get BroadcastOK message from the peers we gossip to
+            RequestBody::BulkBroadcastOk { in_reply_to, .. } => {
+                self.gossip_handler
+                    .send(GossipMsg::GotResponse(*in_reply_to))
+                    .unwrap();
+
+                None
+            }
+            RequestBody::BulkBroadcast { broadcasts } => {
+                for b in broadcasts {
+                    self.handle_request(&RequestBody::Broadcast(b.clone()))
+                        .unwrap();
+                }
+
+                Some(ResponseBody::BulkBroadcast {
+                    msg_id: self.inner_node.generate_msg_id(),
+                    in_reply_to: broadcasts[0].msg_id,
+                })
+            }
         }
     }
 }

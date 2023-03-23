@@ -1,7 +1,7 @@
 use color_eyre::Result;
 use rand::Rng;
 
-use std::{sync::Arc, time::Instant};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use common::{IdGenerator, Message, MsgId, MsgIdAble, Node, NodeIdable};
 use crossbeam::channel::{Receiver, Sender, TryRecvError};
@@ -36,7 +36,7 @@ impl Job {
 
 pub struct GossipManager {
     reciever: Receiver<GossipMsg>,
-    gossip_queue: Vec<Job>,
+    // gossip_queue: Vec<Job>,
     stdout_sender: Sender<String>,
     node_id: String,
 
@@ -44,17 +44,19 @@ pub struct GossipManager {
     topology: Vec<String>,
 
     ids: Arc<IdGenerator>,
+
+    to_gossip: HashMap<String, Vec<Job>>,
 }
 
 impl GossipManager {
     pub fn new(reciever: Receiver<GossipMsg>, stdout_sender: Sender<String>, node: &Node) -> Self {
         Self {
             reciever,
-            gossip_queue: Vec::new(),
             stdout_sender,
             node_id: node.node_id().to_owned(),
             topology: node.peers.clone(),
             ids: Arc::clone(&node.ids),
+            to_gossip: HashMap::new(),
         }
     }
 
@@ -77,9 +79,9 @@ impl GossipManager {
                     // });
 
                     let now = std::time::Instant::now();
-                    let jitter = rand::thread_rng().gen_range(0..100);
+                    let jitter = rand::thread_rng().gen_range(0..1000);
 
-                    let run_at = now + std::time::Duration::from_millis(100 + jitter);
+                    let run_at = now + std::time::Duration::from_millis(700 + jitter);
 
                     let to_send_to = self
                         .topology
@@ -101,20 +103,61 @@ impl GossipManager {
                             run_at,
                             attempts: 0,
                         };
-                        self.gossip_queue.push(job);
+
+                        self.to_gossip
+                            .entry(dest.clone())
+                            .or_insert_with(Vec::new)
+                            .push(job);
                     }
                 }
-                Ok(GossipMsg::GotResponse(in_response_to)) => self
-                    .gossip_queue
-                    .retain(|job| job.broadcast.msg_id != in_response_to),
+                Ok(GossipMsg::GotResponse(in_response_to)) => {
+                    let keys: Vec<_> = self.to_gossip.keys().cloned().collect();
+
+                    for k in keys {
+                        let jobs = self.to_gossip.get_mut(&k).unwrap();
+                        jobs.retain(|job| job.broadcast.msg_id != in_response_to);
+                    }
+                }
                 Err(TryRecvError::Disconnected) => break,
                 Err(TryRecvError::Empty) => {
                     let now = std::time::Instant::now();
                     let stdout_sender = &self.stdout_sender;
 
-                    for job in self.gossip_queue.iter_mut() {
-                        if job.run_at <= now {
-                            job.send(stdout_sender, self.node_id.clone());
+                    // for jobs in self.to_gossip.values() {
+                    //     for job in iobs {
+                    //         if job.run_at <= now {
+                    //             job.send(stdout_sender, self.node_id.clone());
+                    //         }
+                    //     }
+                    // }
+                    let keys: Vec<_> = self.to_gossip.keys().cloned().collect();
+                    for k in keys {
+                        let jobs = self.to_gossip.get_mut(&k).unwrap();
+                        if jobs.is_empty() {
+                            continue;
+                        }
+
+                        let min_run_at = jobs.iter().min_by_key(|job| job.run_at).unwrap().run_at;
+                        if min_run_at > now {
+                            continue;
+                        }
+
+                        let m = Message {
+                            body: RequestBody::BulkBroadcast {
+                                broadcasts: jobs.iter().map(|job| job.broadcast.clone()).collect(),
+                            },
+                            dest: k.clone(),
+                            src: self.node_id.clone(),
+                        };
+                        let output = serde_json::to_string(&m).unwrap();
+
+                        stdout_sender.send(output).unwrap();
+
+                        for j in jobs {
+                            j.attempts += 1;
+
+                            let delay = std::time::Duration::from_millis(j.attempts * 1000);
+                            j.run_at = std::time::Instant::now() + delay;
                         }
                     }
                 }

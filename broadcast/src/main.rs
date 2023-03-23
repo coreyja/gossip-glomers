@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 enum RequestBody {
     #[serde(rename = "broadcast")]
     Broadcast(Broadcast),
+    #[serde(rename = "bulk_broadcast")]
+    BulkBroadcast { broadcasts: Vec<Broadcast> },
     #[serde(rename = "read")]
     Read { msg_id: MsgId },
     #[serde(rename = "topology")]
@@ -23,6 +25,8 @@ enum RequestBody {
     },
     #[serde(rename = "broadcast_ok")]
     BroadcastOk { msg_id: MsgId, in_reply_to: MsgId },
+    #[serde(rename = "bulk_broadcast_ok")]
+    BulkBroadcastOk { msg_id: MsgId, in_reply_to: MsgId },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -38,6 +42,8 @@ struct Broadcast {
 enum ResponseBody {
     #[serde(rename = "broadcast_ok")]
     Broadcast { msg_id: MsgId, in_reply_to: MsgId },
+    #[serde(rename = "bulk_broadcast_ok")]
+    BulkBroadcast { msg_id: MsgId, in_reply_to: MsgId },
     #[serde(rename = "read_ok")]
     Read {
         msg_id: MsgId,
