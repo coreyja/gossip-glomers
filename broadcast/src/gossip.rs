@@ -1,4 +1,5 @@
 use color_eyre::Result;
+use rand::Rng;
 
 use std::{sync::Arc, time::Instant};
 
@@ -28,17 +29,7 @@ impl Job {
 
         self.attempts += 1;
 
-        // // attempts=1 -> 10ms
-        // // attempts=2 -> 160ms
-        // // attempts=3 -> 810ms
-        // let backoff_delay = self.attempts.pow(4) * 10;
-
-        // const CONSTANT_DELAY_MS: u64 = 300;
-        // eprintln!("(attempt {}", self.attempts);
-
-        // let delay = std::time::Duration::from_millis(CONSTANT_DELAY_MS + backoff_delay);
-
-        let delay = std::time::Duration::from_millis(self.attempts * 200);
+        let delay = std::time::Duration::from_millis(self.attempts * 1000);
         self.run_at = std::time::Instant::now() + delay;
     }
 }
@@ -73,20 +64,41 @@ impl GossipManager {
 
             match msg {
                 Ok(GossipMsg::Topology(topology)) => {
-                    self.topology = topology;
+                    // self.topology = topology;
                 }
-                Ok(GossipMsg::Gossip(msg)) => {
-                    let now = std::time::Instant::now();
+                Ok(GossipMsg::Gossip {
+                    msg,
+                    already_sent_to,
+                }) => {
+                    // Lets see if our gossip queue can be trimmed based on this info
+                    // self.gossip_queue.retain(|in_queue| {
+                    //     in_queue.broadcast.message != msg
+                    //         && !already_sent_to.contains(&in_queue.dest)
+                    // });
 
-                    for dest in self.topology.iter().filter(|d| d != &&self.node_id) {
+                    let now = std::time::Instant::now();
+                    let jitter = rand::thread_rng().gen_range(0..100);
+
+                    let run_at = now + std::time::Duration::from_millis(100 + jitter);
+
+                    let to_send_to = self
+                        .topology
+                        .iter()
+                        .filter(|d| !already_sent_to.contains(d));
+
+                    let mut already_sent_to = already_sent_to.clone();
+                    already_sent_to.append(&mut to_send_to.clone().cloned().collect());
+
+                    for dest in to_send_to {
                         let broadcast = Broadcast {
                             msg_id: self.ids.generate_msg_id(),
                             message: msg,
+                            already_sent_to: already_sent_to.clone(),
                         };
                         let job = Job {
                             broadcast: broadcast.clone(),
                             dest: dest.clone(),
-                            run_at: now,
+                            run_at,
                             attempts: 0,
                         };
                         self.gossip_queue.push(job);
@@ -114,7 +126,10 @@ impl GossipManager {
 }
 
 pub enum GossipMsg {
-    Gossip(u64),
+    Gossip {
+        msg: u64,
+        already_sent_to: Vec<String>,
+    },
     Topology(Vec<String>),
     GotResponse(MsgId),
 }

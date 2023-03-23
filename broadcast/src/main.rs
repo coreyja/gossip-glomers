@@ -29,6 +29,8 @@ enum RequestBody {
 struct Broadcast {
     msg_id: MsgId,
     message: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty", default = "Default::default")]
+    already_sent_to: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

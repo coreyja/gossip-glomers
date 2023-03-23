@@ -13,8 +13,11 @@ pub(crate) struct RequestHandler {
 }
 
 impl RequestHandler {
-    fn gossip(&mut self, b: u64) -> Result<()> {
-        self.gossip_handler.send(GossipMsg::Gossip(b))?;
+    fn gossip(&mut self, b: u64, already_sent_to: Vec<String>) -> Result<()> {
+        self.gossip_handler.send(GossipMsg::Gossip {
+            msg: b,
+            already_sent_to,
+        })?;
 
         Ok(())
     }
@@ -40,7 +43,11 @@ impl Handler for RequestHandler {
 
     fn handle_request(&mut self, body: &RequestBody) -> Option<ResponseBody> {
         match body {
-            RequestBody::Broadcast(Broadcast { msg_id, message }) => {
+            RequestBody::Broadcast(Broadcast {
+                msg_id,
+                message,
+                already_sent_to,
+            }) => {
                 if self.recieved_values.contains(message) {
                     return Some(ResponseBody::Broadcast {
                         msg_id: self.inner_node.generate_msg_id(),
@@ -50,7 +57,7 @@ impl Handler for RequestHandler {
 
                 self.recieved_values.push(*message);
 
-                self.gossip(*message).unwrap();
+                self.gossip(*message, already_sent_to.clone()).unwrap();
 
                 Some(ResponseBody::Broadcast {
                     msg_id: self.inner_node.generate_msg_id(),
